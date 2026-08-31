@@ -81,6 +81,17 @@ Coût accepté : environ 1 USD par mois pour la clé, plus les requêtes API.
 Arbitrage assumé face à SSE-S3, gratuit mais sans policy propre ni
 traçabilité fine.
 
+Pour que la clé constitue une barrière réellement indépendante d'IAM, sa
+key policy est explicite plutôt que laissée au comportement par défaut
+d'AWS (délégation complète à IAM via le compte root) : un accès root
+restreint à `GetKeyPolicy`/`PutKeyPolicy` sert uniquement de recours en cas
+de mauvaise configuration, sans jamais accorder `kms:*` à l'ensemble du
+compte. Les actions d'administration de la clé et son usage
+(`Decrypt`/`Encrypt`/`GenerateDataKey`) sont accordés nommément à
+l'opérateur courant, avec une liste extensible (`additional_key_user_arns`)
+pour le jour où un rôle OIDC GitHub Actions ou un second opérateur doit lire
+le state.
+
 ### 5. Amorçage : migration du state du bootstrap dans son propre bucket
 
 Le bucket de state est lui-même une ressource Terraform. Séquence retenue :
@@ -92,4 +103,47 @@ Le bucket de state est lui-même une ressource Terraform. Séquence retenue :
 
 Le bootstrap héberge donc son propre state. Alternatives écartées : la
 création manuelle (ressource hors IaC, non reproductible) et le state local
-committé (fichier binaire en conflit de merge, contenu sensible dans
+committé (fichier binaire en conflit de merge, contenu sensible en clair
+dans l'historique git).
+
+## Conséquences
+
+### Positives
+- Un seul opérateur ou pipeline ne peut plus verrouiller ou corrompre le
+  state d'un autre : le découpage par environnement et par couche borne le
+  rayon d'impact d'une erreur humaine ou d'un bug de pipeline.
+- Aucune ressource AWS supplémentaire à faire vivre pour le verrouillage
+  (pas de table DynamoDB), donc rien de plus à sécuriser, monitorer ou
+  facturer pour cette seule fonction.
+- La clé KMS dédiée avec key policy explicite fait du chiffrement une
+  barrière réellement indépendante d'IAM, pas une simple case cochée.
+- Coût total mesuré et documenté (~1,05 USD/mois, README du bootstrap) :
+  aucune surprise face au garde-fou budgétaire de 5 USD.
+
+### Négatives
+- Neuf states plus le bootstrap à faire vivre dès le départ, avant même la
+  première charge applicative réelle — complexité opérationnelle payée
+  d'avance, pas amortie progressivement.
+- Le bootstrap est en dépendance circulaire assumée avec sa propre
+  infrastructure (son state vit dans le bucket qu'il a créé) : la reprise
+  après perte du bucket exige une procédure manuelle documentée, pas un
+  simple `terraform apply`.
+- `use_lockfile` retire une compatibilité implicite avec certains outils
+  tiers (Terragrunt, Atlantis anciens) qui présupposent DynamoDB.
+- La liste `additional_key_user_arns` doit être tenue à jour manuellement à
+  chaque nouveau principal (rôle CI, second opérateur) : oubli possible,
+  contrairement à une délégation IAM large qui aurait inclus ce cas par
+  défaut — c'est le prix explicite de la barrière indépendante.
+
+## Points ouverts
+- Faut-il un `object_lock_configuration` (WORM) sur le bucket de state pour
+  se prémunir d'une suppression malveillante par un principal qui aurait
+  quand même obtenu les droits nécessaires ? Non retenu pour l'instant,
+  faute de second contributeur humain avec des droits larges.
+- Quand ajouter effectivement une entrée à `additional_key_user_arns` pour
+  un rôle OIDC GitHub Actions : dès le premier `terraform plan` automatisé
+  en CI, ou seulement lorsqu'un `apply` automatisé sera aussi envisagé ?
+- Le nommage `<env>/<layer>/terraform.tfstate` suppose que `env` et `layer`
+  ne changent jamais de nom une fois des états créés (le chemin S3 fait
+  partie de la clé primaire du state) : documenter la procédure de
+  renommage avant d'en avoir besoin, pas après.
