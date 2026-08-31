@@ -10,6 +10,13 @@ repos:
       - id: mixed-line-ending
 
   - repo: https://github.com/antonbabenko/pre-commit-terraform
-    rev: v1.96.1
+    rev: v1.99.0      
     hooks:
+      - id: terraform_fmt
+      - id: terraform_validate
       - id: terraform_tflint
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.28.0      
+    hooks:
+      - id: gitleaks
