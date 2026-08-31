@@ -14,4 +14,13 @@ jobs:
         with:
           python-version: "3.12"
 
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.14.1"
+          terraform_wrapper: false
+
+      - uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: "v0.64.0"
+
       - uses: pre-commit/action@v3.0.1
